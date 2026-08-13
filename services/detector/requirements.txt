@@ -1,0 +1,7 @@
+tensorflow>=2.12.0
+pytorch>=2.0.1
+numpy>=1.24.3
+pandas>=2.0.3
+scikit-learn>=1.3.0
+onb>=6.1.0
+flask>=3.0.0

@@ -1,0 +1,6 @@
+services:
+  frauddetectionsystem:
+    image: frauddetectionsystem
+    build:
+      context: .
+      dockerfile: ./Dockerfile

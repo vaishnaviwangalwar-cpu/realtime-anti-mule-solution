@@ -1,0 +1,7 @@
+confluent-kafka==2.1.1
+redis==5.0.1
+faker==20.1.0
+numpy==1.24.3
+pandas==2.0.3
+pydantic==2.5.2
+python-dotenv==1.0.0
