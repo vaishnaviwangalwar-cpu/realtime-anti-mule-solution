@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """Graph Analyzer Service
 
-* Consumes enriched transactions from Kafka (topic ``transactions.enriched``).
+* Consumes transactions from Kafka (topic ``transactions.raw`` or ``transactions.enriched``).
 * Persists accounts and transaction relationships in Neo4j.
-* Periodically (default every 30 s) builds an in‑memory NetworkX graph from Neo4j and runs the Louvain community‑detection algorithm.
-* For each discovered community ("cluster") it stores a lightweight *morphic memory* signature in Redis – this enables the detector to recognise dormant‑resurrection patterns.
-* Optionally publishes a compact cluster summary to a Kafka topic ``graph.updates`` so that the dashboard can receive real‑time topology changes.
-
-The implementation below is intentionally lightweight – it focuses on correctness and observability rather than raw performance. Production‑grade deployments would add proper batching, back‑pressure handling, and more sophisticated feature extraction.
+* Periodically (default every 15 s) builds an in‑memory NetworkX graph from Neo4j and runs Louvain community detection.
+* For each discovered community ("cluster") it stores a morphic memory signature in Redis.
+* Publishes cluster summary to Kafka topic ``graph.updates`` for real-time dashboard display.
 """
 
 import os
@@ -24,10 +22,10 @@ from redis import Redis
 import networkx as nx
 
 # ---------------------------------------------------------------------------
-# Configuration (environment variables – all defined in docker‑compose)
+# Configuration
 # ---------------------------------------------------------------------------
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
-ENRICHED_TOPIC = "transactions.enriched"
+INPUT_TOPICS = [os.getenv("INPUT_TOPIC", "transactions.raw"), "transactions.enriched"]
 GRAPH_UPDATES_TOPIC = "graph.updates"
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
@@ -35,10 +33,8 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
-# How often (seconds) we run the clustering step
-CLUSTER_INTERVAL = int(os.getenv("CLUSTERING_INTERVAL", "30"))
-# Redis key prefix for stored cluster signatures
-MORPHIC_PREFIX = "morphic:"  # e.g. morphic:cluster_id -> JSON signature
+CLUSTER_INTERVAL = int(os.getenv("CLUSTERING_INTERVAL", "15"))
+MORPHIC_PREFIX = "morphic:"
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -49,69 +45,72 @@ handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(message)s"))
 log.addHandler(handler)
 
-# ---------------------------------------------------------------------------
-# Initialise external services (singletons reused across async loops)
-# ---------------------------------------------------------------------------
-redis_client = Redis.from_url(REDIS_URL)
-neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP})
-
-# ---------------------------------------------------------------------------
-# Helper: publish a JSON message to the ``graph.updates`` topic
-# ---------------------------------------------------------------------------
-def publish_graph_update(message: dict):
+def get_redis_client():
     try:
-        producer.produce(GRAPH_UPDATES_TOPIC, json.dumps(message).encode("utf-8"))
-        producer.poll(0)
-    except Exception as exc:
-        log.error(f"Failed to publish graph update: {exc}")
+        return Redis.from_url(REDIS_URL)
+    except Exception as e:
+        log.warning(f"Redis connection error: {e}")
+        return None
+
+def get_neo4j_driver():
+    try:
+        return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    except Exception as e:
+        log.warning(f"Neo4j driver error: {e}")
+        return None
 
 # ---------------------------------------------------------------------------
-# Neo4j persistence helpers – each enriched transaction is turned into a
-# simple directed edge ``(sender)-[:SENT_TO {amount, timestamp}]->(receiver)``.
+# Helpers
 # ---------------------------------------------------------------------------
-def persist_transaction(txn: dict):
+def persist_transaction(driver, txn: dict):
     sender = txn.get("account_id")
     receiver = txn.get("counterparty_id")
-    if not sender or not receiver:
+    if not sender or not receiver or sender == receiver:
         return
     ts = txn.get("timestamp", datetime.utcnow().isoformat() + "Z")
-    amount = txn.get("amount", 0)
-    with neo4j_driver.session() as session:
-        session.run(
-            """
-            MERGE (a:Account {id: $sender})
-            MERGE (b:Account {id: $receiver})
-            CREATE (a)-[:SENT_TO {amount: $amt, timestamp: $ts}]->(b)
-            """,
-            sender=sender,
-            receiver=receiver,
-            amt=amount,
-            ts=ts,
-        )
+    amount = float(txn.get("amount", 0.0))
+    try:
+        with driver.session() as session:
+            session.run(
+                """
+                MERGE (a:Account {id: $sender})
+                MERGE (b:Account {id: $receiver})
+                CREATE (a)-[:SENT_TO {amount: $amt, timestamp: $ts}]->(b)
+                """,
+                sender=sender,
+                receiver=receiver,
+                amt=amount,
+                ts=ts,
+            )
+    except Exception as e:
+        log.warning(f"Failed to persist transaction to Neo4j: {e}")
 
-# ---------------------------------------------------------------------------
-# Clustering routine – builds a NetworkX graph from Neo4j, runs Louvain
-# community detection, stores a concise signature in Redis, and emits an
-# update message for the dashboard.
-# ---------------------------------------------------------------------------
-def run_clustering():
-    log.info("Running Louvain clustering …")
-    # Pull a minimal edge list from Neo4j – this is fine for demo sizes.
+def run_clustering(driver, redis_client, producer):
+    if not driver:
+        return
+    log.info("Running Louvain community clustering on Neo4j transaction graph...")
     query = """
     MATCH (a:Account)-[r:SENT_TO]->(b:Account)
     RETURN a.id AS src, b.id AS dst, r.amount AS amount
+    LIMIT 1000
     """
     edges: List[Tuple[str, str, float]] = []
-    with neo4j_driver.session() as session:
-        for record in session.run(query):
-            edges.append((record["src"], record["dst"], record["amount"]))
+    try:
+        with driver.session() as session:
+            for record in session.run(query):
+                edges.append((record["src"], record["dst"], float(record["amount"])))
+    except Exception as exc:
+        log.error(f"Error querying Neo4j for clustering: {exc}")
+        return
+
+    if not edges:
+        log.info("No transaction edges found yet for clustering")
+        return
 
     G = nx.DiGraph()
     for src, dst, amt in edges:
         G.add_edge(src, dst, weight=amt)
 
-    # Louvain works on undirected graphs – we convert.
     UG = G.to_undirected()
     try:
         communities = list(nx.community.louvain_communities(UG, weight="weight", seed=42))
@@ -119,76 +118,93 @@ def run_clustering():
         log.error(f"Louvain clustering failed: {exc}")
         return
 
-    # Build a mapping: node -> community_id
-    node_to_cluster: Dict[str, str] = {}
-    for idx, community in enumerate(communities):
-        cluster_id = f"cluster_{idx}"
-        for node in community:
-            node_to_cluster[node] = cluster_id
+    if redis_client:
+        try:
+            pipeline = redis_client.pipeline()
+            for idx, community in enumerate(communities):
+                cluster_key = f"{MORPHIC_PREFIX}cluster_{idx}"
+                signature = {
+                    "members": list(community),
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+                pipeline.set(cluster_key, json.dumps(signature))
+                pipeline.expire(cluster_key, 86_400)
+            pipeline.execute()
+        except Exception as e:
+            log.warning(f"Redis pipeline error in clustering: {e}")
 
-    # Store a simple signature per cluster in Redis – for the demo we store
-    # the list of member account IDs (could be replaced by a vector hash).
-    pipeline = redis_client.pipeline()
-    for idx, community in enumerate(communities):
-        cluster_key = f"{MORPHIC_PREFIX}cluster_{idx}"
-        signature = {
-            "members": list(community),
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-        }
-        pipeline.set(cluster_key, json.dumps(signature))
-        # Optional TTL – keep for a day (adjust as needed)
-        pipeline.expire(cluster_key, 86_400)
-    pipeline.execute()
-
-    # Publish a concise update for the dashboard – only cluster IDs and sizes.
     update_msg = {
         "type": "clustering",
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "clusters": [{
             "cluster_id": f"cluster_{i}",
             "size": len(c),
+            "members": list(c)[:10]
         } for i, c in enumerate(communities)],
     }
-    publish_graph_update(update_msg)
-    log.info("Clustering completed – %d clusters emitted", len(communities))
+    if producer:
+        try:
+            producer.produce(GRAPH_UPDATES_TOPIC, json.dumps(update_msg).encode("utf-8"))
+            producer.poll(0)
+        except Exception as exc:
+            log.error(f"Failed to publish graph update: {exc}")
+
+    log.info("Clustering completed – %d clusters detected and saved", len(communities))
 
 # ---------------------------------------------------------------------------
-# Async background loops – one for Kafka consumption, one for periodic clustering.
+# Background loops
 # ---------------------------------------------------------------------------
-async def kafka_consumer_loop():
+async def kafka_consumer_loop(driver):
+    await asyncio.sleep(5)
     consumer_conf = {
         "bootstrap.servers": KAFKA_BOOTSTRAP,
-        "group.id": "graph-analyzer",
+        "group.id": "graph-analyzer-group",
         "auto.offset.reset": "earliest",
     }
-    consumer = Consumer(consumer_conf)
-    consumer.subscribe([ENRICHED_TOPIC])
-    log.info("Subscribed to Kafka topic %s", ENRICHED_TOPIC)
-    while True:
-        msg = consumer.poll(1.0)
-        if msg is None:
-            await asyncio.sleep(0.1)
-            continue
-        if msg.error():
-            log.error("Kafka error: %s", msg.error())
-            continue
-        try:
-            txn = json.loads(msg.value().decode("utf-8"))
-            persist_transaction(txn)
-        except Exception as exc:
-            log.exception("Failed to process transaction message: %s", exc)
-    # consumer.close() – unreachable because loop runs forever
+    try:
+        consumer = Consumer(consumer_conf)
+        consumer.subscribe(INPUT_TOPICS)
+        log.info("Graph Analyzer subscribed to Kafka topics: %s", INPUT_TOPICS)
+        while True:
+            msg = consumer.poll(1.0)
+            if msg is None:
+                await asyncio.sleep(0.05)
+                continue
+            if msg.error():
+                await asyncio.sleep(0.5)
+                continue
+            try:
+                txn = json.loads(msg.value().decode("utf-8"))
+                persist_transaction(driver, txn)
+            except Exception as exc:
+                log.exception("Failed to process transaction: %s", exc)
+    except Exception as e:
+        log.error(f"Kafka consumer error in graph analyzer: {e}")
 
-async def clustering_loop():
+async def clustering_loop(driver, redis_client, producer):
+    await asyncio.sleep(10)
     while True:
-        run_clustering()
+        try:
+            run_clustering(driver, redis_client, producer)
+        except Exception as e:
+            log.error(f"Clustering loop iteration error: {e}")
         await asyncio.sleep(CLUSTER_INTERVAL)
 
 # ---------------------------------------------------------------------------
-# Entrypoint – run both loops concurrently.
+# Entrypoint
 # ---------------------------------------------------------------------------
 async def main():
-    await asyncio.gather(kafka_consumer_loop(), clustering_loop())
+    driver = get_neo4j_driver()
+    redis_client = get_redis_client()
+    try:
+        producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP})
+    except Exception:
+        producer = None
+
+    await asyncio.gather(
+        kafka_consumer_loop(driver),
+        clustering_loop(driver, redis_client, producer)
+    )
 
 if __name__ == "__main__":
     try:

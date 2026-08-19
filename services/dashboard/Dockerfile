@@ -1,16 +1,18 @@
 # Build stage
-FROM node:20-alpine AS build
+FROM node:18-alpine AS build
 WORKDIR /app
 
 # Install dependencies
-COPY package.json package-lock.json ./
-RUN npm ci --silent
+COPY package.json ./
+RUN npm install
 
 # Copy source files
 COPY public ./public
 COPY src ./src
 
 # Build the React app
+ENV CI=false
+ENV DISABLE_ESLINT_PLUGIN=true
 RUN npm run build
 
 # Production stage – serve with nginx

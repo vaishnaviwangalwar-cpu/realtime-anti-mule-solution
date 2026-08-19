@@ -14,7 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the generator source code
 COPY generate_data.py .
-COPY scripts/ ./scripts/
 
 # Set entrypoint to the generator script
 ENTRYPOINT ["python", "generate_data.py"]

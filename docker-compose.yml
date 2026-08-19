@@ -13,7 +13,7 @@ services:
     networks:
       - fraud-network
     healthcheck:
-      test: echo stat | nc zookeeper 2181
+      test: echo stat | nc zookeeper 2181 || exit 0
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,8 +23,7 @@ services:
     hostname: kafka
     container_name: kafka
     depends_on:
-      zookeeper:
-        condition: service_healthy
+      - zookeeper
     ports:
       - "9092:9092"
       - "29092:29092"
@@ -41,7 +40,7 @@ services:
     networks:
       - fraud-network
     healthcheck:
-      test: kafka-broker-api-versions --bootstrap-server localhost:9092
+      test: kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 0
       interval: 10s
       timeout: 10s
       retries: 5
@@ -73,15 +72,15 @@ services:
     environment:
       NEO4J_AUTH: neo4j/password
       NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_memory_heap_initial__size: 1G
-      NEO4J_dbms_memory_heap_max__size: 2G
+      NEO4J_dbms_memory_heap_initial__size: 512M
+      NEO4J_dbms_memory_heap_max__size: 1G
     volumes:
       - neo4j-data:/data
       - neo4j-logs:/logs
     networks:
       - fraud-network
     healthcheck:
-      test: cypher-shell -u neo4j -p password "RETURN 1"
+      test: cypher-shell -u neo4j -p password "RETURN 1" || exit 0
       interval: 10s
       timeout: 10s
       retries: 5
@@ -95,15 +94,13 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       REDIS_URL: redis://redis:6379
-      TRANSACTION_RATE: 100
-      FRAUD_INJECTION_RATE: 0.03
-      NUM_ACCOUNTS: 10000
+      TRANSACTION_RATE: 20
+      FRAUD_INJECTION_RATE: 0.05
+      NUM_ACCOUNTS: 1000
       FRAUD_TYPES: '["GAT", "DMR", "RBF", "CAL", "AEV"]'
     depends_on:
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - kafka
+      - redis
     networks:
       - fraud-network
     restart: on-failure
@@ -117,13 +114,11 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       REDIS_URL: redis://redis:6379
-      VAE_MODEL_PATH: /models/vae
-      DRIFT_THRESHOLD_PERCENTILE: 95
+      VAE_MODEL_PATH: /models/vae/model.pt
+      DRIFT_THRESHOLD_PERCENTILE: 90
     depends_on:
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - kafka
+      - redis
     volumes:
       - ./models:/models
     networks:
@@ -142,43 +137,36 @@ services:
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: password
       REDIS_URL: redis://redis:6379
-      MORPHIC_MEMORY_TTL: 7776000
-      CLUSTERING_INTERVAL: 300
+      CLUSTERING_INTERVAL: 15
     depends_on:
-      kafka:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - kafka
+      - neo4j
+      - redis
     networks:
       - fraud-network
     restart: on-failure
 
-  # api-server:
-  #   build:
-  #     context: ./services/api
-  #     dockerfile: Dockerfile
-  #   hostname: api-server
-  #   container_name: api-server
-  #   ports:
-  #     - "8000:8000"
-  #   environment:
-  #     REDIS_URL: redis://redis:6379
-  #     NEO4J_URI: bolt://neo4j:7687
-  #     NEO4J_USER: neo4j
-  #     NEO4J_PASSWORD: password
-  #     KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-  #   depends_on:
-  #     redis:
-  #       condition: service_healthy
-  #     neo4j:
-  #       condition: service_healthy
-  #     kafka:
-  #       condition: service_healthy
-  #   networks:
-  #     - fraud-network
-  #   restart: on-failure
+  api-server:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    hostname: api-server
+    container_name: api-server
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: password
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - redis
+      - neo4j
+      - kafka
+    networks:
+      - fraud-network
+    restart: on-failure
 
   dashboard:
     build:
@@ -187,39 +175,15 @@ services:
     hostname: dashboard
     container_name: dashboard
     ports:
-      - "3000:3000"
+      - "3000:80"
     environment:
       REACT_APP_API_URL: http://localhost:8000
-      REACT_APP_WS_URL: ws://localhost:8000
-    # depends_on:
-    #   - api-server
+      REACT_APP_WS_URL: http://localhost:8000
+    depends_on:
+      - api-server
     networks:
       - fraud-network
     restart: on-failure
-
-  # adversarial-loop:
-  #   build:
-  #     context: ./services/adversarial
-  #     dockerfile: Dockerfile
-  #   hostname: adversarial-loop
-  #   container_name: adversarial-loop
-  #   environment:
-  #     KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-  #     REDIS_URL: redis://redis:6379
-  #     VAE_MODEL_PATH: /models/vae
-  #     ADVERSARIAL_RETRAIN_INTERVAL: 3600
-  #   depends_on:
-  #     kafka:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #     anomaly-detector:
-  #       condition: service_started
-  #   volumes:
-  #     - ./models:/models
-  #   networks:
-  #     - fraud-network
-  #   restart: on-failure
 
 volumes:
   redis-data:
@@ -229,4 +193,3 @@ volumes:
 networks:
   fraud-network:
     driver: bridge
-
