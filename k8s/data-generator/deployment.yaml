@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-generator
+  namespace: antimule
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-generator
+  template:
+    metadata:
+      labels:
+        app: data-generator
+    spec:
+      containers:
+        - name: data-generator
+          image: us-docker.pkg.dev/your-gcp-project-id/antimule/data-generator:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: antimule-secrets
+          env:
+            - name: TRANSACTION_RATE
+              value: "20"
+            - name: FRAUD_INJECTION_RATE
+              value: "0.05"
+            - name: NUM_ACCOUNTS
+              value: "1000"
+            - name: FRAUD_TYPES
+              value: '["GAT", "DMR", "RBF", "CAL", "AEV"]'
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          livenessProbe:
+            exec:
+              command: ["cat", "/tmp/healthy"]
+            initialDelaySeconds: 10
+            periodSeconds: 10

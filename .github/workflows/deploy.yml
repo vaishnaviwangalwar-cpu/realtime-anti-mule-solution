@@ -1,0 +1,91 @@
+name: Build and Deploy to GKE
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: us-central1
+  GKE_CLUSTER: antimule-cluster
+  GAR_REPO: antimule
+
+jobs:
+  build-and-deploy:
+    name: Build, Push & Deploy
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Get GKE Credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+
+      - name: Set Image Tag
+        id: image_tag
+        run: echo "TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Build & Push Microservices
+        run: |
+          REGISTRY="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPO }}"
+
+          # Build and Push Services in Parallel
+          docker build -t $REGISTRY/api-server:${{ env.TAG }} -t $REGISTRY/api-server:latest services/api &
+          docker build -t $REGISTRY/dashboard:${{ env.TAG }} -t $REGISTRY/dashboard:latest services/dashboard &
+          docker build -t $REGISTRY/anomaly-detector:${{ env.TAG }} -t $REGISTRY/anomaly-detector:latest services/detector &
+          docker build -t $REGISTRY/graph-analyzer:${{ env.TAG }} -t $REGISTRY/graph-analyzer:latest services/graph-analyzer &
+          docker build -t $REGISTRY/data-generator:${{ env.TAG }} -t $REGISTRY/data-generator:latest services/generator &
+          wait
+
+          docker push $REGISTRY/api-server:${{ env.TAG }} &
+          docker push $REGISTRY/dashboard:${{ env.TAG }} &
+          docker push $REGISTRY/anomaly-detector:${{ env.TAG }} &
+          docker push $REGISTRY/graph-analyzer:${{ env.TAG }} &
+          docker push $REGISTRY/data-generator:${{ env.TAG }} &
+          wait
+
+      - name: Substitute GCP Project ID in K8s Manifests
+        run: |
+          find k8s/ -type f -name "*.yaml" -exec sed -i "s/your-gcp-project-id/${{ env.GCP_PROJECT_ID }}/g" {} +
+
+      - name: Deploy to GKE
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/kafka/
+          kubectl apply -f k8s/redis/
+          kubectl apply -f k8s/neo4j/
+          kubectl apply -f k8s/api-server/
+          kubectl apply -f k8s/dashboard/
+          kubectl apply -f k8s/anomaly-detector/
+          kubectl apply -f k8s/graph-analyzer/
+          kubectl apply -f k8s/data-generator/
+          kubectl apply -f k8s/ingress.yaml
+
+      - name: Verify Rollout Status
+        run: |
+          kubectl rollout status deployment/api-server -n antimule --timeout=180s
+          kubectl rollout status deployment/dashboard -n antimule --timeout=180s
+          kubectl rollout status deployment/anomaly-detector -n antimule --timeout=180s

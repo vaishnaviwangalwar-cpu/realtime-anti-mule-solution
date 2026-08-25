@@ -26,6 +26,8 @@ NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 
+CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",")]
+
 # Initialize Socket.IO Async Server
 sio = socketio.AsyncServer(
     async_mode="asgi",
@@ -36,7 +38,7 @@ fastapi_app = FastAPI(title="Real-Time Anti-Mule Intelligence API", version="1.0
 
 fastapi_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,6 +72,37 @@ async def connect(sid, environ):
 @sio.event
 async def disconnect(sid):
     log.info(f"Socket.IO client disconnected: {sid}")
+
+@fastapi_app.get("/healthz")
+def liveness_probe():
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat() + "Z"}
+
+@fastapi_app.get("/readyz")
+def readiness_probe():
+    checks = {
+        "redis": False,
+        "neo4j": False
+    }
+    r = get_redis_client()
+    if r:
+        try:
+            checks["redis"] = r.ping()
+        except Exception:
+            pass
+    driver = get_neo4j_driver()
+    if driver:
+        try:
+            driver.verify_connectivity()
+            checks["neo4j"] = True
+        except Exception:
+            pass
+
+    is_ready = checks["redis"] or checks["neo4j"]  # Ready if at least primary stores respond
+    return {
+        "status": "ready" if is_ready else "degraded",
+        "checks": checks,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
 
 @fastapi_app.get("/")
 def read_root():

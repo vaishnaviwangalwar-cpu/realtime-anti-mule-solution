@@ -75,6 +75,12 @@ def run():
     log.info("Starting generator – %.1f TPS, %.2f%% fraud", TRANSACTION_RATE, FRAUD_INJECTION_RATE * 100)
     while True:
         try:
+            with open("/tmp/healthy", "w") as f:
+                f.write("ok")
+        except Exception:
+            pass
+
+        try:
             is_fraud = random.random() < FRAUD_INJECTION_RATE
             txn = make_transaction(is_fraud)
             payload = json.dumps(txn).encode("utf-8")

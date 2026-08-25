@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-detector
+  namespace: antimule
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anomaly-detector
+  template:
+    metadata:
+      labels:
+        app: anomaly-detector
+    spec:
+      containers:
+        - name: anomaly-detector
+          image: us-docker.pkg.dev/your-gcp-project-id/antimule/anomaly-detector:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: antimule-secrets
+          env:
+            - name: VAE_MODEL_PATH
+              value: "/models/vae/model.pt"
+            - name: DRIFT_THRESHOLD_PERCENTILE
+              value: "90"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          livenessProbe:
+            exec:
+              command: ["cat", "/tmp/healthy"]
+            initialDelaySeconds: 15
+            periodSeconds: 10

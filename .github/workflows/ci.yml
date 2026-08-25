@@ -1,0 +1,43 @@
+name: CI Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Syntax & Lint Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Verify Python Syntax
+        run: |
+          python -m py_compile services/api/main.py
+          python -m py_compile services/detector/anomaly_detector.py
+          python -m py_compile services/graph-analyzer/graph_analyzer.py
+          python -m py_compile services/generator/generate_data.py
+
+      - name: Validate Kubernetes Manifests
+        run: |
+          sudo snap install kubectl --classic
+          find k8s/ -type f -name "*.yaml" -exec sed -i "s/your-gcp-project-id/demo-project/g" {} +
+          kubectl apply --dry-run=client -f k8s/namespace.yaml
+          kubectl apply --dry-run=client -f k8s/secrets.yaml
+          kubectl apply --dry-run=client -f k8s/kafka/
+          kubectl apply --dry-run=client -f k8s/redis/
+          kubectl apply --dry-run=client -f k8s/neo4j/
+          kubectl apply --dry-run=client -f k8s/api-server/
+          kubectl apply --dry-run=client -f k8s/dashboard/
+          kubectl apply --dry-run=client -f k8s/anomaly-detector/
+          kubectl apply --dry-run=client -f k8s/graph-analyzer/
+          kubectl apply --dry-run=client -f k8s/data-generator/
+          kubectl apply --dry-run=client -f k8s/ingress.yaml

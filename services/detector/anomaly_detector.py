@@ -150,6 +150,13 @@ async def main():
 
     try:
         while True:
+            # Update liveness heartbeat file for Kubernetes probes
+            try:
+                with open("/tmp/healthy", "w") as f:
+                    f.write("ok")
+            except Exception:
+                pass
+
             msg = consumer.poll(1.0)
             if msg is None:
                 await asyncio.sleep(0.05)

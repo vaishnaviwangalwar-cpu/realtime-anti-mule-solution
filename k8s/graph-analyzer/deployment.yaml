@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graph-analyzer
+  namespace: antimule
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: graph-analyzer
+  template:
+    metadata:
+      labels:
+        app: graph-analyzer
+    spec:
+      containers:
+        - name: graph-analyzer
+          image: us-docker.pkg.dev/your-gcp-project-id/antimule/graph-analyzer:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: antimule-secrets
+          env:
+            - name: CLUSTERING_INTERVAL
+              value: "15"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          livenessProbe:
+            exec:
+              command: ["cat", "/tmp/healthy"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
