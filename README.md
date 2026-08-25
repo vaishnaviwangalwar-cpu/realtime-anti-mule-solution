@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ SentinelMule — Real-Time Anti-Mule & Fraud Intelligence Solution
+# Real-Time Anti-Mule & Fraud Intelligence Solution
 
 ### *High-Throughput Stream Processing, Temporal VAE Behavioral Drift Detection & Morphic Graph Community Intelligence*
 
@@ -29,7 +29,7 @@
 
 ## 📌 Executive Summary
 
-**SentinelMule** is an enterprise-grade, sub-second anti-money laundering (AML) and mule account detection platform designed for real-time banking environments. By synthesizing **temporal behavioral deep learning (PyTorch LSTM-VAE)** with **dynamic graph community clustering (Neo4j + NetworkX Louvain)** over an event-driven **Kafka** backbone, SentinelMule uncovers hidden mule syndicates, money laundering layering, and smurfing rings *before* funds exit the banking perimeter.
+This is an enterprise-grade, sub-second anti-money laundering (AML) and mule account detection platform designed for real-time banking environments. By synthesizing **temporal behavioral deep learning (PyTorch LSTM-VAE)** with **dynamic graph community clustering (Neo4j + NetworkX Louvain)** over an event-driven **Kafka** backbone, SentinelMule uncovers hidden mule syndicates, money laundering layering, and smurfing rings *before* funds exit the banking perimeter.
 
 ```
 Incoming Transactions (20+ TPS) 
@@ -355,11 +355,6 @@ When $\text{Drift}(t) > \tau_{90}$, an immediate alert is generated and dispatch
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for complete details.
 
 ---
-
-## 👥 Contributors & Hackathon Team
-
-Developed with ❤️ for the **BOIXIITH Hackathon**.
-
 - **Vaishnavi Wangalwar** — *Lead Developer & System Architect*
 
 ---
