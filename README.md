@@ -11,6 +11,7 @@
 [![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-20+_TPS_Stream-231F20?style=for-the-badge&logo=apachekafka&logoColor=white)](docker-compose.yml)
 [![React](https://img.shields.io/badge/React_18-Cytoscape.js-61DAFB?style=for-the-badge&logo=react&logoColor=black)](services/dashboard/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-GKE_Ready-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](k8s/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-F7B731?style=for-the-badge)](LICENSE)
 
 <p align="center">
   <a href="#-key-capabilities">Key Capabilities</a> •
@@ -346,6 +347,12 @@ Where:
 $$\text{Drift}(t) = 1 - \frac{\mu_{\text{baseline}} \cdot \mu_{\text{active}}}{\|\mu_{\text{baseline}}\| \|\mu_{\text{active}}\|}$$
 
 When $\text{Drift}(t) > \tau_{90}$, an immediate alert is generated and dispatched to the Kafka event bus.
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for complete details.
 
 ---
 
