@@ -71,7 +71,7 @@ Incoming Transactions (20+ TPS)
 
 ```mermaid
 mindmap
-  root((SentinelMule Intelligence))
+  root((Realtime-anti-mule-solution))
     Temporal Deep Learning
       PyTorch LSTM-VAE
       Sequential Embedding Latent Space
@@ -161,7 +161,7 @@ flowchart TB
 
 ## 🎯 Fraud Typologies Detected
 
-SentinelMule is pre-configured with mathematical heuristics and deep representations to capture the most complex money laundering patterns:
+This is pre-configured with mathematical heuristics and deep representations to capture the most complex money laundering patterns:
 
 | Typology Code | Typology Name | Structural Signature | Detection Mechanism |
 | :--- | :--- | :--- | :--- |
